@@ -46,6 +46,8 @@ function formatClock(timestamp: number): string {
   });
 }
 
+type MobilePanelTab = 'upgrades' | 'milestones' | 'logs';
+
 export class CafeApp {
   private readonly root: HTMLDivElement;
   private readonly engine: GameEngine;
@@ -68,6 +70,12 @@ export class CafeApp {
   private readonly floatLayer: HTMLDivElement;
   private readonly toastStack: HTMLDivElement;
   private readonly winBanner: HTMLDivElement;
+  private readonly mobileTabBar: HTMLDivElement;
+  private readonly mobilePanelTitle: HTMLHeadingElement;
+  private readonly mobilePanelDescription: HTMLParagraphElement;
+  private readonly mobilePanelBody: HTMLDivElement;
+  private readonly mobileTabs: HTMLButtonElement[];
+  private mobileTab: MobilePanelTab = 'upgrades';
   private unsubscribe: () => void = () => {};
 
   constructor(root: HTMLDivElement, engine: GameEngine) {
@@ -94,6 +102,15 @@ export class CafeApp {
     this.floatLayer = this.requireElement<HTMLDivElement>('float-layer');
     this.toastStack = this.requireElement<HTMLDivElement>('toast-stack');
     this.winBanner = this.requireElement<HTMLDivElement>('win-banner');
+    this.mobileTabBar = this.requireElement<HTMLDivElement>('mobile-tab-bar');
+    this.mobilePanelTitle = this.requireElement<HTMLHeadingElement>('mobile-panel-title');
+    this.mobilePanelDescription = this.requireElement<HTMLParagraphElement>(
+      'mobile-panel-description',
+    );
+    this.mobilePanelBody = this.requireElement<HTMLDivElement>('mobile-panel-body');
+    this.mobileTabs = Array.from(
+      this.root.querySelectorAll<HTMLButtonElement>('[data-mobile-tab]'),
+    );
 
     this.bindEvents();
     this.render();
@@ -144,6 +161,31 @@ export class CafeApp {
 
       this.engine.buyUpgrade(upgradeId);
     });
+
+    this.mobilePanelBody.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest<HTMLButtonElement>('[data-upgrade-id]');
+      const upgradeId = button?.dataset.upgradeId;
+
+      if (!upgradeId) {
+        return;
+      }
+
+      this.engine.buyUpgrade(upgradeId);
+    });
+
+    this.mobileTabBar.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest<HTMLButtonElement>('[data-mobile-tab]');
+      const nextTab = button?.dataset.mobileTab as MobilePanelTab | undefined;
+
+      if (!nextTab || nextTab === this.mobileTab) {
+        return;
+      }
+
+      this.mobileTab = nextTab;
+      this.render();
+    });
   }
 
   private render(): void {
@@ -181,14 +223,20 @@ export class CafeApp {
       WIN_TARGET_REVENUE,
     )} / 人气 ${WIN_TARGET_POPULARITY}，当前完成 ${snapshot.winProgress.toFixed(1)}%。`;
     this.winProgressBar.style.width = `${snapshot.winProgress}%`;
-    this.renderUpgrades(viewModel.upgrades);
-    this.renderMilestones(viewModel);
-    this.renderLogs(viewModel);
+
+    const upgradesMarkup = this.renderUpgradesMarkup(viewModel.upgrades);
+    const milestonesMarkup = this.renderMilestonesMarkup(viewModel);
+    const logsMarkup = this.renderLogsMarkup(viewModel);
+
+    this.upgradeList.innerHTML = upgradesMarkup;
+    this.milestoneList.innerHTML = milestonesMarkup;
+    this.logList.innerHTML = logsMarkup;
+    this.renderMobilePanel(upgradesMarkup, milestonesMarkup, logsMarkup);
     this.winBanner.classList.toggle('visible', state.hasWon);
   }
 
-  private renderUpgrades(upgrades: UpgradeViewModel[]): void {
-    this.upgradeList.innerHTML = upgrades
+  private renderUpgradesMarkup(upgrades: UpgradeViewModel[]): string {
+    return upgrades
       .map((upgrade) => {
         const buttonClassNames = ['upgrade-card'];
 
@@ -225,8 +273,8 @@ export class CafeApp {
       .join('');
   }
 
-  private renderMilestones(viewModel: GameViewModel): void {
-    this.milestoneList.innerHTML = viewModel.milestones
+  private renderMilestonesMarkup(viewModel: GameViewModel): string {
+    return viewModel.milestones
       .map(
         (milestone) => `
           <article class="milestone-item ${milestone.claimed ? 'claimed' : ''}">
@@ -250,8 +298,8 @@ export class CafeApp {
       .join('');
   }
 
-  private renderLogs(viewModel: GameViewModel): void {
-    this.logList.innerHTML = viewModel.state.logs
+  private renderLogsMarkup(viewModel: GameViewModel): string {
+    return viewModel.state.logs
       .map(
         (log) => `
           <article class="log-item ${log.tone}">
@@ -264,6 +312,48 @@ export class CafeApp {
         `,
       )
       .join('');
+  }
+
+  private renderMobilePanel(
+    upgradesMarkup: string,
+    milestonesMarkup: string,
+    logsMarkup: string,
+  ): void {
+    const panels: Record<
+      MobilePanelTab,
+      { title: string; description: string; listClass: string; content: string }
+    > = {
+      upgrades: {
+        title: '店面扩张',
+        description: '常用升级收在这里，手机上不用滑过整页内容再回头购买。',
+        listClass: 'upgrade-list',
+        content: upgradesMarkup,
+      },
+      milestones: {
+        title: '猫圈热度',
+        description: '随时查看下一阶段奖励，不用拉到页面底部确认进度。',
+        listClass: 'milestone-list',
+        content: milestonesMarkup,
+      },
+      logs: {
+        title: '营业日志',
+        description: '保存、里程碑和购买记录集中查看，减少来回滚动。',
+        listClass: 'log-list',
+        content: logsMarkup,
+      },
+    };
+    const panel = panels[this.mobileTab];
+
+    this.mobilePanelTitle.textContent = panel.title;
+    this.mobilePanelDescription.textContent = panel.description;
+    this.mobilePanelBody.className = `mobile-panel-body ${panel.listClass}`;
+    this.mobilePanelBody.innerHTML = panel.content;
+
+    for (const button of this.mobileTabs) {
+      const isActive = button.dataset.mobileTab === this.mobileTab;
+      button.classList.toggle('active', isActive);
+      button.setAttribute('aria-pressed', String(isActive));
+    }
   }
 
   private presentEvent(event: EngineEvent): void {
@@ -435,7 +525,7 @@ export class CafeApp {
             </div>
           </section>
 
-          <aside class="card">
+          <aside class="card desktop-secondary">
             <div class="panel-header">
               <div>
                 <div class="kicker">升级清单</div>
@@ -447,7 +537,23 @@ export class CafeApp {
           </aside>
         </main>
 
-        <section class="bottom-grid">
+        <section class="card mobile-secondary">
+          <div class="panel-header mobile-panel-header">
+            <div>
+              <div class="kicker">快速切换</div>
+              <h2 id="mobile-panel-title">店面扩张</h2>
+            </div>
+            <p id="mobile-panel-description">常用升级收在这里，手机上不用滑过整页内容再回头购买。</p>
+          </div>
+          <div id="mobile-tab-bar" class="mobile-tabs" role="tablist" aria-label="手机分区切换">
+            <button class="mobile-tab active" type="button" data-mobile-tab="upgrades" aria-pressed="true">升级</button>
+            <button class="mobile-tab" type="button" data-mobile-tab="milestones" aria-pressed="false">里程碑</button>
+            <button class="mobile-tab" type="button" data-mobile-tab="logs" aria-pressed="false">日志</button>
+          </div>
+          <div id="mobile-panel-body" class="mobile-panel-body upgrade-list" aria-live="polite"></div>
+        </section>
+
+        <section class="bottom-grid desktop-secondary">
           <section class="card">
             <div class="panel-header">
               <div>
