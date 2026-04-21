@@ -1,0 +1,17 @@
+{
+  "name": "idle-cat-cafe",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^5.4.21",
+    "vitest": "^3.2.4"
+  }
+}
