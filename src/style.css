@@ -350,6 +350,7 @@ p {
 
 .mascot-copy,
 .milestone-status,
+.barrage-layer,
 .float-layer {
   position: relative;
   z-index: 1;
@@ -396,6 +397,40 @@ p {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+.barrage-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.barrage-item {
+  position: absolute;
+  top: var(--barrage-top, 12%);
+  right: -48%;
+  padding: 0.34rem 0.74rem;
+  border-radius: 999px;
+  border: 1px solid rgba(91, 53, 29, 0.12);
+  background: rgba(255, 250, 243, 0.94);
+  color: var(--espresso);
+  font-size: 0.82rem;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 10px 22px rgba(91, 53, 29, 0.08);
+  animation: barrage-fly linear forwards;
+}
+
+.barrage-item.success {
+  border-color: rgba(92, 142, 124, 0.3);
+  color: var(--mint-deep);
+}
+
+.barrage-item.milestone {
+  border-color: rgba(216, 139, 115, 0.3);
+  color: var(--caramel);
 }
 
 .floating-gain {
@@ -881,6 +916,23 @@ p {
   }
 }
 
+@keyframes barrage-fly {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+
+  8%,
+  88% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(calc(-100vw - 240px));
+    opacity: 0;
+  }
+}
+
 @keyframes button-bump {
   0% {
     transform: scale(1);
@@ -1043,6 +1095,11 @@ p {
 
   .mascot-stage {
     min-height: 154px;
+  }
+
+  .barrage-item {
+    font-size: 0.74rem;
+    padding: 0.3rem 0.62rem;
   }
 
   .mascot-copy {

@@ -87,8 +87,6 @@ export class CafeApp {
   private readonly unlockHintLabel: HTMLParagraphElement;
   private readonly unlockHintBar: HTMLDivElement;
   private readonly upgradeList: HTMLDivElement;
-  private readonly milestoneList: HTMLDivElement;
-  private readonly logList: HTMLDivElement;
   private readonly achievementList: HTMLDivElement;
   private readonly sourceList: HTMLDivElement;
   private readonly statsClicks: HTMLDivElement;
@@ -97,6 +95,7 @@ export class CafeApp {
   private readonly statsBestUpgradeHint: HTMLDivElement;
   private readonly statsRuns: HTMLDivElement;
   private readonly floatLayer: HTMLDivElement;
+  private readonly barrageLayer: HTMLDivElement;
   private readonly toastStack: HTMLDivElement;
   private readonly winBanner: HTMLDivElement;
   private readonly mobileTabBar: HTMLDivElement;
@@ -139,8 +138,6 @@ export class CafeApp {
     this.unlockHintLabel = this.requireElement<HTMLParagraphElement>('unlock-hint-label');
     this.unlockHintBar = this.requireElement<HTMLDivElement>('unlock-hint-bar');
     this.upgradeList = this.requireElement<HTMLDivElement>('upgrade-list');
-    this.milestoneList = this.requireElement<HTMLDivElement>('milestone-list');
-    this.logList = this.requireElement<HTMLDivElement>('log-list');
     this.achievementList = this.requireElement<HTMLDivElement>('achievement-list');
     this.sourceList = this.requireElement<HTMLDivElement>('source-list');
     this.statsClicks = this.requireElement<HTMLDivElement>('stats-clicks');
@@ -149,6 +146,7 @@ export class CafeApp {
     this.statsBestUpgradeHint = this.requireElement<HTMLDivElement>('stats-best-upgrade-hint');
     this.statsRuns = this.requireElement<HTMLDivElement>('stats-runs');
     this.floatLayer = this.requireElement<HTMLDivElement>('float-layer');
+    this.barrageLayer = this.requireElement<HTMLDivElement>('barrage-layer');
     this.toastStack = this.requireElement<HTMLDivElement>('toast-stack');
     this.winBanner = this.requireElement<HTMLDivElement>('win-banner');
     this.mobileTabBar = this.requireElement<HTMLDivElement>('mobile-tab-bar');
@@ -416,8 +414,6 @@ export class CafeApp {
     const achievementsMarkup = this.renderAchievementsMarkup(viewModel);
 
     this.upgradeList.innerHTML = upgradesMarkup;
-    this.milestoneList.innerHTML = milestonesMarkup;
-    this.logList.innerHTML = logsMarkup;
     this.achievementList.innerHTML = achievementsMarkup;
     this.sourceList.innerHTML = this.renderPassiveSourcesMarkup(snapshot.passiveSources);
     this.renderMobilePanel(upgradesMarkup, milestonesMarkup, logsMarkup, achievementsMarkup);
@@ -652,17 +648,21 @@ export class CafeApp {
           'success',
         );
         this.spawnFloatingGain(`+${formatNumber(event.amount)}`, 48, 30);
+        this.spawnBarrage(`离线收益 +${formatNumber(event.amount)} 小鱼干`, 'success');
         this.soundManager.play('milestone');
         break;
       case 'milestone':
         this.showToast(`达成「${event.headline}」，人气 +${event.popularityReward}。`, 'milestone');
+        this.spawnBarrage(`里程碑：${event.headline}（+${event.popularityReward} 人气）`, 'milestone');
         this.soundManager.play('milestone');
         break;
       case 'unlock':
         this.showToast(`解锁新升级：${event.upgradeName}。`);
+        this.spawnBarrage(`解锁：${event.upgradeName}`, 'info');
         break;
       case 'achievement':
         this.showToast(`成就达成：${event.achievementName}。`, 'milestone');
+        this.spawnBarrage(`成就达成：${event.achievementName}`, 'milestone');
         this.soundManager.play('achievement');
         break;
       case 'purchase':
@@ -679,16 +679,19 @@ export class CafeApp {
       case 'story':
         this.storyBanner.textContent = `「${event.headline}」${event.message}`;
         this.showToast(`${event.headline}：${event.message}`);
+        this.spawnBarrage(`${event.headline}：${event.message}`, 'info');
         break;
       case 'sound':
         this.soundManager.setEnabled(event.enabled);
         break;
       case 'prestige':
         this.showToast(`品牌重整完成，获得 +${event.gained} 品牌值。`, 'milestone');
+        this.spawnBarrage(`品牌重整完成：+${event.gained} 品牌值`, 'milestone');
         this.soundManager.play('prestige');
         break;
       case 'win':
         this.showToast('猫咪咖啡馆晋级明星门店，继续营业可冲更高品牌值。', 'milestone');
+        this.spawnBarrage('明星猫咖达成，进入高热度运营阶段。', 'milestone');
         this.soundManager.play('achievement');
         break;
       case 'reset':
@@ -715,6 +718,24 @@ export class CafeApp {
     element.style.top = `${top + (Math.random() * 10 - 5)}%`;
     this.floatLayer.append(element);
     window.setTimeout(() => element.remove(), 900);
+  }
+
+  private spawnBarrage(message: string, tone: LogTone = 'info'): void {
+    const element = document.createElement('span');
+    const lane = Math.floor(Math.random() * 3);
+    const duration = 6200 + Math.floor(Math.random() * 2200);
+    const activeItems = this.barrageLayer.querySelectorAll('.barrage-item');
+
+    if (activeItems.length >= 6) {
+      activeItems[0]?.remove();
+    }
+
+    element.className = `barrage-item ${tone}`;
+    element.textContent = message;
+    element.style.setProperty('--barrage-top', `${10 + lane * 26}%`);
+    element.style.animationDuration = `${duration}ms`;
+    this.barrageLayer.append(element);
+    window.setTimeout(() => element.remove(), duration + 200);
   }
 
   private showToast(message: string, tone: LogTone = 'info'): void {
@@ -831,6 +852,7 @@ export class CafeApp {
                 </div>
                 <p id="cat-copy" class="cat-copy">今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。</p>
               </div>
+              <div class="barrage-layer" id="barrage-layer" aria-hidden="true"></div>
               <div class="float-layer" id="float-layer" aria-hidden="true"></div>
             </div>
 
@@ -934,7 +956,7 @@ export class CafeApp {
               <div class="kicker">手机快捷区</div>
               <h2 id="mobile-panel-title">店面扩张</h2>
             </div>
-            <p id="mobile-panel-description">升级、里程碑、日志和成就集中切换，减少长距离滚动。</p>
+            <p id="mobile-panel-description">关键动态在主区弹幕显示，这里保留可回查面板。</p>
           </div>
           <div id="mobile-tab-bar" class="mobile-tabs" role="tablist" aria-label="手机分区切换">
             <button class="mobile-tab active" type="button" data-mobile-tab="upgrades" aria-pressed="true">升级</button>
@@ -948,30 +970,6 @@ export class CafeApp {
             <button class="buy-mode-button" type="button" data-buy-mode="max" aria-pressed="false">买最大</button>
           </div>
           <div id="mobile-panel-body" class="mobile-panel-body upgrade-list" aria-live="polite"></div>
-        </section>
-
-        <section class="bottom-grid desktop-secondary">
-          <section class="card">
-            <div class="panel-header">
-              <div>
-                <div class="kicker">里程碑</div>
-                <h2>猫圈热度</h2>
-              </div>
-              <p>每个阶段奖励都会影响中后期推进效率。</p>
-            </div>
-            <div id="milestone-list" class="milestone-list"></div>
-          </section>
-
-          <section class="card">
-            <div class="panel-header">
-              <div>
-                <div class="kicker">营业日志</div>
-                <h2>动态事件与关键记录</h2>
-              </div>
-              <p>午后高峰、网红探店、节日主题周等事件会在这里出现。</p>
-            </div>
-            <div id="log-list" class="log-list"></div>
-          </section>
         </section>
 
         <section class="card desktop-secondary">
