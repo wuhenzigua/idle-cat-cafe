@@ -608,20 +608,20 @@ export class CafeApp {
   private updateMascotScene(viewModel: GameViewModel): void {
     const revenue = viewModel.state.lifetimeRevenue;
     const popularity = viewModel.state.popularity;
-    let face = 'ฅ^•ﻌ•^ฅ';
+    let face = '😺';
     let copy = '今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。';
     let stageClass = 'stage-early';
 
     if (viewModel.state.hasWon) {
-      face = 'ฅ^•ﻌ•^ฅ✦';
+      face = '😻';
       copy = '明星猫咖达成，猫咪们开始挑选下一站扩张城市。';
       stageClass = 'stage-fame';
     } else if (revenue >= 40_000 || popularity >= 90) {
-      face = '(=^･ω･^=)';
+      face = '😼';
       copy = '品牌进入高光阶段，探店客和回头客同时拉升节奏。';
       stageClass = 'stage-late';
     } else if (revenue >= 10_000 || popularity >= 45) {
-      face = 'ฅ(•ㅅ•)ฅ';
+      face = '😸';
       copy = '店里开始形成固定客流，升级决策比疯狂点击更重要。';
       stageClass = 'stage-mid';
     }
@@ -848,7 +848,7 @@ export class CafeApp {
             <div id="mascot-stage" class="mascot-stage stage-early">
               <div class="mascot-copy">
                 <div class="cat-halo">
-                  <div id="cat-face" class="cat-face">ฅ^•ﻌ•^ฅ</div>
+                  <div id="cat-face" class="cat-face">😺</div>
                 </div>
                 <p id="cat-copy" class="cat-copy">今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。</p>
               </div>

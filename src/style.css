@@ -369,7 +369,8 @@ p {
   display: grid;
   place-items: center;
   width: min(220px, 55vw);
-  aspect-ratio: 1;
+  height: min(220px, 55vw);
+  aspect-ratio: 1 / 1;
   border-radius: 50%;
   background:
     radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.92), transparent 28%),
@@ -381,7 +382,13 @@ p {
 }
 
 .cat-face {
-  font-size: clamp(3rem, 8vw, 5.2rem);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  font-size: clamp(2.4rem, 7.2vw, 4.2rem);
+  line-height: 1;
+  white-space: nowrap;
   transform: translateY(-4px);
   transition: transform 220ms ease;
 }
@@ -1108,6 +1115,7 @@ p {
 
   .cat-halo {
     width: min(132px, 42vw);
+    height: min(132px, 42vw);
   }
 
   .cat-copy {
