@@ -1,6 +1,8 @@
-import { WIN_TARGET_POPULARITY, WIN_TARGET_REVENUE } from '../game/content';
+import { PRESTIGE_UNLOCK_REVENUE, WIN_TARGET_POPULARITY, WIN_TARGET_REVENUE } from '../game/content';
+import { getMostProfitableUpgrade } from '../game/economy';
 import { GameEngine } from '../game/engine';
-import type { EngineEvent, GameViewModel, LogTone, UpgradeViewModel } from '../game/types';
+import type { BuyMode, EngineEvent, GameViewModel, LogTone, UpgradeViewModel } from '../game/types';
+import { SoundManager } from './sound';
 
 const compactFormatter = new Intl.NumberFormat('zh-CN', {
   notation: 'compact',
@@ -15,6 +17,8 @@ const preciseFormatter = new Intl.NumberFormat('zh-CN', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
+
+type MobilePanelTab = 'upgrades' | 'milestones' | 'logs' | 'achievements';
 
 function escapeHtml(value: string): string {
   return value
@@ -46,17 +50,33 @@ function formatClock(timestamp: number): string {
   });
 }
 
-type MobilePanelTab = 'upgrades' | 'milestones' | 'logs';
+function parseBuyMode(value: string | undefined): BuyMode | null {
+  if (value === '1') {
+    return 1;
+  }
+
+  if (value === '10') {
+    return 10;
+  }
+
+  if (value === 'max') {
+    return 'max';
+  }
+
+  return null;
+}
 
 export class CafeApp {
   private readonly root: HTMLDivElement;
   private readonly engine: GameEngine;
+  private readonly soundManager = new SoundManager();
   private readonly fishValue: HTMLDivElement;
   private readonly clickValue: HTMLDivElement;
   private readonly passiveValue: HTMLDivElement;
   private readonly popularityValue: HTMLDivElement;
   private readonly multiplierValue: HTMLDivElement;
   private readonly lifetimeValue: HTMLDivElement;
+  private readonly brandValue: HTMLDivElement;
   private readonly serveButton: HTMLButtonElement;
   private readonly serveHint: HTMLParagraphElement;
   private readonly nextMilestoneLabel: HTMLParagraphElement;
@@ -64,9 +84,18 @@ export class CafeApp {
   private readonly nextMilestoneBar: HTMLDivElement;
   private readonly winProgressLabel: HTMLParagraphElement;
   private readonly winProgressBar: HTMLDivElement;
+  private readonly unlockHintLabel: HTMLParagraphElement;
+  private readonly unlockHintBar: HTMLDivElement;
   private readonly upgradeList: HTMLDivElement;
   private readonly milestoneList: HTMLDivElement;
   private readonly logList: HTMLDivElement;
+  private readonly achievementList: HTMLDivElement;
+  private readonly sourceList: HTMLDivElement;
+  private readonly statsClicks: HTMLDivElement;
+  private readonly statsOffline: HTMLDivElement;
+  private readonly statsBestUpgrade: HTMLDivElement;
+  private readonly statsBestUpgradeHint: HTMLDivElement;
+  private readonly statsRuns: HTMLDivElement;
   private readonly floatLayer: HTMLDivElement;
   private readonly toastStack: HTMLDivElement;
   private readonly winBanner: HTMLDivElement;
@@ -75,8 +104,18 @@ export class CafeApp {
   private readonly mobilePanelDescription: HTMLParagraphElement;
   private readonly mobilePanelBody: HTMLDivElement;
   private readonly mobileTabs: HTMLButtonElement[];
+  private readonly buyModeButtons: HTMLButtonElement[];
+  private readonly soundToggleButton: HTMLButtonElement;
+  private readonly prestigeButton: HTMLButtonElement;
+  private readonly prestigeHint: HTMLParagraphElement;
+  private readonly mascotStage: HTMLDivElement;
+  private readonly catFace: HTMLDivElement;
+  private readonly catCopy: HTMLParagraphElement;
+  private readonly storyBanner: HTMLParagraphElement;
+  private readonly keydownHandler: (event: KeyboardEvent) => void;
   private mobileTab: MobilePanelTab = 'upgrades';
   private unsubscribe: () => void = () => {};
+  private readonly lastPulseAt = new Map<string, number>();
 
   constructor(root: HTMLDivElement, engine: GameEngine) {
     this.root = root;
@@ -89,6 +128,7 @@ export class CafeApp {
     this.popularityValue = this.requireElement<HTMLDivElement>('popularity-value');
     this.multiplierValue = this.requireElement<HTMLDivElement>('multiplier-value');
     this.lifetimeValue = this.requireElement<HTMLDivElement>('lifetime-value');
+    this.brandValue = this.requireElement<HTMLDivElement>('brand-value');
     this.serveButton = this.requireElement<HTMLButtonElement>('serve-button');
     this.serveHint = this.requireElement<HTMLParagraphElement>('serve-hint');
     this.nextMilestoneLabel = this.requireElement<HTMLParagraphElement>('next-milestone-label');
@@ -96,9 +136,18 @@ export class CafeApp {
     this.nextMilestoneBar = this.requireElement<HTMLDivElement>('next-milestone-bar');
     this.winProgressLabel = this.requireElement<HTMLParagraphElement>('win-progress-label');
     this.winProgressBar = this.requireElement<HTMLDivElement>('win-progress-bar');
+    this.unlockHintLabel = this.requireElement<HTMLParagraphElement>('unlock-hint-label');
+    this.unlockHintBar = this.requireElement<HTMLDivElement>('unlock-hint-bar');
     this.upgradeList = this.requireElement<HTMLDivElement>('upgrade-list');
     this.milestoneList = this.requireElement<HTMLDivElement>('milestone-list');
     this.logList = this.requireElement<HTMLDivElement>('log-list');
+    this.achievementList = this.requireElement<HTMLDivElement>('achievement-list');
+    this.sourceList = this.requireElement<HTMLDivElement>('source-list');
+    this.statsClicks = this.requireElement<HTMLDivElement>('stats-clicks');
+    this.statsOffline = this.requireElement<HTMLDivElement>('stats-offline');
+    this.statsBestUpgrade = this.requireElement<HTMLDivElement>('stats-best-upgrade');
+    this.statsBestUpgradeHint = this.requireElement<HTMLDivElement>('stats-best-upgrade-hint');
+    this.statsRuns = this.requireElement<HTMLDivElement>('stats-runs');
     this.floatLayer = this.requireElement<HTMLDivElement>('float-layer');
     this.toastStack = this.requireElement<HTMLDivElement>('toast-stack');
     this.winBanner = this.requireElement<HTMLDivElement>('win-banner');
@@ -108,9 +157,20 @@ export class CafeApp {
       'mobile-panel-description',
     );
     this.mobilePanelBody = this.requireElement<HTMLDivElement>('mobile-panel-body');
+    this.soundToggleButton = this.requireElement<HTMLButtonElement>('sound-toggle-button');
+    this.prestigeButton = this.requireElement<HTMLButtonElement>('prestige-button');
+    this.prestigeHint = this.requireElement<HTMLParagraphElement>('prestige-hint');
+    this.mascotStage = this.requireElement<HTMLDivElement>('mascot-stage');
+    this.catFace = this.requireElement<HTMLDivElement>('cat-face');
+    this.catCopy = this.requireElement<HTMLParagraphElement>('cat-copy');
+    this.storyBanner = this.requireElement<HTMLParagraphElement>('story-banner');
     this.mobileTabs = Array.from(
       this.root.querySelectorAll<HTMLButtonElement>('[data-mobile-tab]'),
     );
+    this.buyModeButtons = Array.from(
+      this.root.querySelectorAll<HTMLButtonElement>('[data-buy-mode]'),
+    );
+    this.keydownHandler = (event) => this.onKeydown(event);
 
     this.bindEvents();
     this.render();
@@ -127,6 +187,7 @@ export class CafeApp {
 
   destroy(): void {
     this.unsubscribe();
+    window.removeEventListener('keydown', this.keydownHandler);
   }
 
   private bindEvents(): void {
@@ -134,15 +195,41 @@ export class CafeApp {
       const gained = this.engine.clickGuest();
       this.bumpServeButton();
       this.spawnFloatingGain(`+${formatNumber(gained)}`);
+      this.soundManager.play('click');
+
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate(8);
+      }
     });
 
     this.requireElement<HTMLButtonElement>('save-button').addEventListener('click', () => {
       this.engine.save(true);
     });
 
+    this.soundToggleButton.addEventListener('click', () => {
+      const enabled = this.engine.toggleSoundEnabled();
+      this.showToast(enabled ? '音效已开启。' : '音效已关闭。');
+    });
+
+    this.prestigeButton.addEventListener('click', () => {
+      const shouldPrestige = window.confirm(
+        '是否执行品牌重整？当前本局收益会重置，但会获得永久连锁品牌值加成。',
+      );
+
+      if (!shouldPrestige) {
+        return;
+      }
+
+      const result = this.engine.prestige();
+
+      if (!result) {
+        this.showToast('当前还无法进行品牌重整。');
+      }
+    });
+
     this.requireElement<HTMLButtonElement>('reset-button').addEventListener('click', () => {
       const shouldReset = window.confirm(
-        '确定要清空当前猫咪咖啡馆存档吗？这会从头开始重新营业。',
+        '确定要清空当前猫咪咖啡馆存档吗？品牌值和成就也会一起重置。',
       );
 
       if (shouldReset) {
@@ -151,27 +238,11 @@ export class CafeApp {
     });
 
     this.upgradeList.addEventListener('click', (event) => {
-      const target = event.target as HTMLElement | null;
-      const button = target?.closest<HTMLButtonElement>('[data-upgrade-id]');
-      const upgradeId = button?.dataset.upgradeId;
-
-      if (!upgradeId) {
-        return;
-      }
-
-      this.engine.buyUpgrade(upgradeId);
+      this.handleUpgradePurchase(event);
     });
 
     this.mobilePanelBody.addEventListener('click', (event) => {
-      const target = event.target as HTMLElement | null;
-      const button = target?.closest<HTMLButtonElement>('[data-upgrade-id]');
-      const upgradeId = button?.dataset.upgradeId;
-
-      if (!upgradeId) {
-        return;
-      }
-
-      this.engine.buyUpgrade(upgradeId);
+      this.handleUpgradePurchase(event);
     });
 
     this.mobileTabBar.addEventListener('click', (event) => {
@@ -186,21 +257,119 @@ export class CafeApp {
       this.mobileTab = nextTab;
       this.render();
     });
+
+    this.root.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest<HTMLButtonElement>('[data-buy-mode]');
+      const mode = parseBuyMode(button?.dataset.buyMode);
+
+      if (!button || mode === null) {
+        return;
+      }
+
+      this.engine.setBuyMode(mode);
+      this.render();
+    });
+
+    window.addEventListener('keydown', this.keydownHandler);
+  }
+
+  private onKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    const isTyping =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      target?.isContentEditable;
+
+    if (isTyping) {
+      return;
+    }
+
+    switch (event.code) {
+      case 'Space':
+      case 'Enter':
+        event.preventDefault();
+        this.serveButton.click();
+        return;
+      case 'KeyS':
+        event.preventDefault();
+        this.engine.save(true);
+        return;
+      case 'KeyM':
+        event.preventDefault();
+        this.soundToggleButton.click();
+        return;
+      case 'KeyQ':
+      case 'Digit1':
+        this.engine.setBuyMode(1);
+        this.render();
+        return;
+      case 'KeyW':
+      case 'Digit2':
+        this.engine.setBuyMode(10);
+        this.render();
+        return;
+      case 'KeyE':
+      case 'Digit3':
+        this.engine.setBuyMode('max');
+        this.render();
+        return;
+      case 'KeyP':
+        this.prestigeButton.click();
+        return;
+      default:
+        return;
+    }
+  }
+
+  private handleUpgradePurchase(event: Event): void {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-upgrade-id]');
+    const upgradeId = button?.dataset.upgradeId;
+
+    if (!upgradeId) {
+      return;
+    }
+
+    this.engine.buyUpgrade(upgradeId);
   }
 
   private render(): void {
     const viewModel = this.engine.getViewModel();
     const { snapshot, state } = viewModel;
 
-    this.fishValue.textContent = `${formatNumber(snapshot.fish)} 小鱼干`;
-    this.clickValue.textContent = `${formatNumber(snapshot.clickIncome)} / 次`;
-    this.passiveValue.textContent = `${formatNumber(snapshot.passiveIncome)} / 秒`;
-    this.popularityValue.textContent = `${formatNumber(state.popularity)} 人气`;
-    this.multiplierValue.textContent = `x${snapshot.globalMultiplier.toFixed(2)}`;
-    this.lifetimeValue.textContent = `${formatNumber(snapshot.lifetimeRevenue)} 总营收`;
+    this.soundManager.setEnabled(state.soundEnabled);
+    this.soundToggleButton.textContent = state.soundEnabled ? '音效开' : '音效关';
+
+    this.updateMetric(this.fishValue, `${formatNumber(snapshot.fish)} 小鱼干`, 'fish');
+    this.updateMetric(this.clickValue, `${formatNumber(snapshot.clickIncome)} / 次`, 'click');
+    this.updateMetric(this.passiveValue, `${formatNumber(snapshot.passiveIncome)} / 秒`, 'passive');
+    this.updateMetric(this.popularityValue, `${formatNumber(state.popularity)} 人气`, 'popularity');
+    this.updateMetric(this.multiplierValue, `x${snapshot.globalMultiplier.toFixed(2)}`, 'multiplier');
+    this.updateMetric(this.lifetimeValue, `${formatNumber(snapshot.lifetimeRevenue)} 总营收`, 'lifetime');
+    this.updateMetric(this.brandValue, `${state.brandValue} 品牌值`, 'brand');
+    this.updateMetric(this.statsClicks, `${formatNumber(state.stats.totalClicks)} 次`, 'stats-clicks');
+    this.updateMetric(
+      this.statsOffline,
+      `${formatNumber(state.stats.totalOfflineIncome)} 小鱼干`,
+      'stats-offline',
+    );
+    this.updateMetric(this.statsRuns, `${state.runs} 次`, 'stats-runs');
+
+    const bestUpgrade = getMostProfitableUpgrade(state);
+    this.statsBestUpgrade.textContent = bestUpgrade ? bestUpgrade.name : '暂无';
+    this.statsBestUpgradeHint.textContent = bestUpgrade
+      ? `${formatNumber(bestUpgrade.amount)} 小鱼干`
+      : '先购入升级后会显示';
+
     this.serveHint.textContent = `每次点击招待一桌客人可获得 ${formatNumber(
       snapshot.clickIncome,
-    )} 小鱼干，离线结算按 50% 效率补发。`;
+    )} 小鱼干。快捷键：空格点击，Q/W/E 切换买 1/10/最大。`;
 
     if (snapshot.nextMilestone) {
       const remainingRevenue = Math.max(
@@ -214,28 +383,55 @@ export class CafeApp {
       )} 小鱼干可获得 +${snapshot.nextMilestone.rewardPopularity} 人气。`;
       this.nextMilestoneBar.style.width = `${snapshot.nextMilestone.progress * 100}%`;
     } else {
-      this.nextMilestoneTitle.textContent = '全部里程碑已拿下';
-      this.nextMilestoneLabel.textContent = '所有猫咪圈层都认识你了，接下来只要冲刺明星猫咖。';
+      this.nextMilestoneTitle.textContent = '里程碑已清空';
+      this.nextMilestoneLabel.textContent = '所有阶段奖励已领取，继续冲刺品牌值与终局。';
       this.nextMilestoneBar.style.width = '100%';
+    }
+
+    if (snapshot.nextUpgradeUnlock) {
+      this.unlockHintLabel.textContent = `${snapshot.nextUpgradeUnlock.name}：${snapshot.nextUpgradeUnlock.requirementText}`;
+      this.unlockHintBar.style.width = `${snapshot.nextUpgradeUnlock.progress * 100}%`;
+    } else {
+      this.unlockHintLabel.textContent = '全部升级线路已开放。';
+      this.unlockHintBar.style.width = '100%';
     }
 
     this.winProgressLabel.textContent = `目标：总营收 ${formatNumber(
       WIN_TARGET_REVENUE,
-    )} / 人气 ${WIN_TARGET_POPULARITY}，当前完成 ${snapshot.winProgress.toFixed(1)}%。`;
+    )} / 人气 ${WIN_TARGET_POPULARITY}，当前完成 ${snapshot.winProgress.toFixed(
+      1,
+    )}%。品牌倍率 x${snapshot.brandMultiplier.toFixed(2)}。`;
     this.winProgressBar.style.width = `${snapshot.winProgress}%`;
+    this.winBanner.classList.toggle('visible', state.hasWon);
 
-    const upgradesMarkup = this.renderUpgradesMarkup(viewModel.upgrades);
+    const canPrestige = snapshot.prestigeGainEstimate > 0;
+    this.prestigeButton.disabled = !canPrestige;
+    this.prestigeHint.textContent = canPrestige
+      ? `当前可获得 +${snapshot.prestigeGainEstimate} 品牌值，永久提升全局倍率。`
+      : `累计营收达到 ${formatNumber(PRESTIGE_UNLOCK_REVENUE)} 后可进行首次品牌重整。`;
+
+    const upgradesMarkup = this.renderUpgradesMarkup(viewModel.upgrades, state.buyMode);
     const milestonesMarkup = this.renderMilestonesMarkup(viewModel);
     const logsMarkup = this.renderLogsMarkup(viewModel);
+    const achievementsMarkup = this.renderAchievementsMarkup(viewModel);
 
     this.upgradeList.innerHTML = upgradesMarkup;
     this.milestoneList.innerHTML = milestonesMarkup;
     this.logList.innerHTML = logsMarkup;
-    this.renderMobilePanel(upgradesMarkup, milestonesMarkup, logsMarkup);
-    this.winBanner.classList.toggle('visible', state.hasWon);
+    this.achievementList.innerHTML = achievementsMarkup;
+    this.sourceList.innerHTML = this.renderPassiveSourcesMarkup(snapshot.passiveSources);
+    this.renderMobilePanel(upgradesMarkup, milestonesMarkup, logsMarkup, achievementsMarkup);
+    this.applyBuyModeButtons(state.buyMode);
+    this.updateMascotScene(viewModel);
   }
 
-  private renderUpgradesMarkup(upgrades: UpgradeViewModel[]): string {
+  private renderUpgradesMarkup(upgrades: UpgradeViewModel[], buyMode: BuyMode): string {
+    if (upgrades.length <= 0) {
+      return '<article class="log-item"><p class="log-text">升级尚未开放，请继续营业。</p></article>';
+    }
+
+    const quantityLabel = buyMode === 'max' ? '买最大' : `买 ${buyMode}`;
+
     return upgrades
       .map((upgrade) => {
         const buttonClassNames = ['upgrade-card'];
@@ -260,7 +456,7 @@ export class CafeApp {
             </div>
             <div class="upgrade-desc">${escapeHtml(upgrade.totalEffectLabel)}</div>
             <div class="upgrade-footer">
-              <span class="upgrade-meta">${upgrade.isMaxed ? '已达到本项上限' : '立即购买生效'}</span>
+              <span class="upgrade-meta">${upgrade.isMaxed ? '已达到上限' : `${quantityLabel}后立即生效`}</span>
               ${
                 upgrade.isMaxed
                   ? '<span class="max-tag">已满级</span>'
@@ -314,10 +510,52 @@ export class CafeApp {
       .join('');
   }
 
+  private renderAchievementsMarkup(viewModel: GameViewModel): string {
+    return viewModel.achievements
+      .map((achievement) => {
+        const progressPercent = Math.round(achievement.progress * 100);
+
+        return `
+          <article class="achievement-item ${achievement.unlocked ? 'unlocked' : ''}">
+            <div class="log-row">
+              <strong>${escapeHtml(achievement.name)}</strong>
+              <span class="log-time">${achievement.unlocked ? '已达成' : `${progressPercent}%`}</span>
+            </div>
+            <p class="log-text">${escapeHtml(achievement.description)}</p>
+            <div class="progress-bar small">
+              <div class="progress-fill ${achievement.unlocked ? 'win' : ''}" style="width:${progressPercent}%"></div>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+  }
+
+  private renderPassiveSourcesMarkup(
+    sources: Array<{ id: string; name: string; perSecond: number }>,
+  ): string {
+    if (sources.length <= 0) {
+      return '<article class="log-item"><p class="log-text">当前没有自动收益来源，先购买店员或设备。</p></article>';
+    }
+
+    return sources
+      .slice(0, 5)
+      .map(
+        (source) => `
+          <article class="source-item">
+            <span>${escapeHtml(source.name)}</span>
+            <strong>${formatNumber(source.perSecond)} / 秒</strong>
+          </article>
+        `,
+      )
+      .join('');
+  }
+
   private renderMobilePanel(
     upgradesMarkup: string,
     milestonesMarkup: string,
     logsMarkup: string,
+    achievementsMarkup: string,
   ): void {
     const panels: Record<
       MobilePanelTab,
@@ -325,21 +563,27 @@ export class CafeApp {
     > = {
       upgrades: {
         title: '店面扩张',
-        description: '常用升级收在这里，手机上不用滑过整页内容再回头购买。',
+        description: '买 1 / 买 10 / 买最大都可用，优先把自动收益线堆起来。',
         listClass: 'upgrade-list',
         content: upgradesMarkup,
       },
       milestones: {
         title: '猫圈热度',
-        description: '随时查看下一阶段奖励，不用拉到页面底部确认进度。',
+        description: '阶段奖励和进度都集中在这里，减少来回滚动。',
         listClass: 'milestone-list',
         content: milestonesMarkup,
       },
       logs: {
         title: '营业日志',
-        description: '保存、里程碑和购买记录集中查看，减少来回滚动。',
+        description: '动态事件、保存和关键升级记录都在这里。',
         listClass: 'log-list',
         content: logsMarkup,
+      },
+      achievements: {
+        title: '成就目标',
+        description: '本局目标与长期目标分离，二周目也有追求。',
+        listClass: 'achievement-list',
+        content: achievementsMarkup,
       },
     };
     const panel = panels[this.mobileTab];
@@ -356,11 +600,48 @@ export class CafeApp {
     }
   }
 
+  private applyBuyModeButtons(mode: BuyMode): void {
+    for (const button of this.buyModeButtons) {
+      const buttonMode = parseBuyMode(button.dataset.buyMode);
+      const active = buttonMode === mode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+  }
+
+  private updateMascotScene(viewModel: GameViewModel): void {
+    const revenue = viewModel.state.lifetimeRevenue;
+    const popularity = viewModel.state.popularity;
+    let face = 'ฅ^•ﻌ•^ฅ';
+    let copy = '今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。';
+    let stageClass = 'stage-early';
+
+    if (viewModel.state.hasWon) {
+      face = 'ฅ^•ﻌ•^ฅ✦';
+      copy = '明星猫咖达成，猫咪们开始挑选下一站扩张城市。';
+      stageClass = 'stage-fame';
+    } else if (revenue >= 40_000 || popularity >= 90) {
+      face = '(=^･ω･^=)';
+      copy = '品牌进入高光阶段，探店客和回头客同时拉升节奏。';
+      stageClass = 'stage-late';
+    } else if (revenue >= 10_000 || popularity >= 45) {
+      face = 'ฅ(•ㅅ•)ฅ';
+      copy = '店里开始形成固定客流，升级决策比疯狂点击更重要。';
+      stageClass = 'stage-mid';
+    }
+
+    this.mascotStage.classList.remove('stage-early', 'stage-mid', 'stage-late', 'stage-fame');
+    this.mascotStage.classList.add(stageClass);
+    this.catFace.textContent = face;
+    this.catCopy.textContent = copy;
+  }
+
   private presentEvent(event: EngineEvent): void {
     switch (event.type) {
       case 'save':
         if (event.manual) {
-          this.showToast('保存已完成，猫咪咖啡馆进度已经写入本地。', 'success');
+          this.showToast('保存已完成，猫咪咖啡馆进度已写入本地。', 'success');
+          this.soundManager.play('purchase');
         }
         break;
       case 'offline':
@@ -370,20 +651,51 @@ export class CafeApp {
           )} 小鱼干。`,
           'success',
         );
-        this.spawnFloatingGain(`+${formatNumber(event.amount)}`, 46, 28);
+        this.spawnFloatingGain(`+${formatNumber(event.amount)}`, 48, 30);
+        this.soundManager.play('milestone');
         break;
       case 'milestone':
         this.showToast(`达成「${event.headline}」，人气 +${event.popularityReward}。`, 'milestone');
+        this.soundManager.play('milestone');
+        break;
+      case 'unlock':
+        this.showToast(`解锁新升级：${event.upgradeName}。`);
+        break;
+      case 'achievement':
+        this.showToast(`成就达成：${event.achievementName}。`, 'milestone');
+        this.soundManager.play('achievement');
+        break;
+      case 'purchase':
+        this.showToast(
+          event.amount > 1
+            ? `已购入 ${event.upgradeName} x${event.amount}。`
+            : `已购入 ${event.upgradeName}。`,
+        );
+        this.soundManager.play('purchase');
+        break;
+      case 'buy-mode':
+        this.showToast(`购买模式已切换为 ${event.mode === 'max' ? '买最大' : `买 ${event.mode}`}。`);
+        break;
+      case 'story':
+        this.storyBanner.textContent = `「${event.headline}」${event.message}`;
+        this.showToast(`${event.headline}：${event.message}`);
+        break;
+      case 'sound':
+        this.soundManager.setEnabled(event.enabled);
+        break;
+      case 'prestige':
+        this.showToast(`品牌重整完成，获得 +${event.gained} 品牌值。`, 'milestone');
+        this.soundManager.play('prestige');
         break;
       case 'win':
-        this.showToast('猫咪咖啡馆晋级为明星猫咖，继续营业也会继续积累收益。', 'milestone');
+        this.showToast('猫咪咖啡馆晋级明星门店，继续营业可冲更高品牌值。', 'milestone');
+        this.soundManager.play('achievement');
         break;
       case 'reset':
         this.showToast('存档已重置，新店重新开张。');
         break;
-      case 'purchase':
-        this.showToast(`已购入 ${event.upgradeName}。`);
-        break;
+      case 'click':
+      case 'tick':
       default:
         break;
     }
@@ -424,6 +736,21 @@ export class CafeApp {
     }
   }
 
+  private updateMetric(element: HTMLElement, text: string, key: string): void {
+    if (element.textContent !== text) {
+      element.textContent = text;
+      const now = Date.now();
+      const lastAt = this.lastPulseAt.get(key) ?? 0;
+
+      if (now - lastAt > 260) {
+        this.lastPulseAt.set(key, now);
+        element.classList.remove('number-jump');
+        void element.offsetWidth;
+        element.classList.add('number-jump');
+      }
+    }
+  }
+
   private requireElement<T extends HTMLElement>(id: string): T {
     const element = this.root.querySelector<T>(`#${id}`);
 
@@ -441,39 +768,49 @@ export class CafeApp {
           <div>
             <p class="eyebrow">Incremental Cat Cafe</p>
             <h1>猫咪咖啡馆</h1>
-            <p class="subtitle">从一张折叠桌和一台小咖啡机开始，把街角小店慢慢经营成城市里最会吸猫的明星猫咖。</p>
+            <p class="subtitle">V1.3 版本：批量购买、分层升级、品牌重整、成就目标与动态事件都已接入。</p>
           </div>
           <div class="toolbar">
             <button id="save-button" class="ghost-button" type="button">手动保存</button>
+            <button id="sound-toggle-button" class="ghost-button" type="button">音效开</button>
             <button id="reset-button" class="ghost-button" type="button">重置存档</button>
           </div>
         </header>
+
+        <section class="story-strip card">
+          <p id="story-banner">「营业提示」先稳定自动收益，再用倍率和活动冲刺中后期。</p>
+        </section>
 
         <section class="summary-grid" aria-label="经营摘要">
           <article class="summary-card">
             <div class="summary-label">库存小鱼干</div>
             <div class="summary-value" id="fish-value">0 小鱼干</div>
-            <div class="summary-subvalue">猫咪最在意的硬通货</div>
+            <div class="summary-subvalue">当前可支配货币</div>
           </article>
           <article class="summary-card">
             <div class="summary-label">单次招待</div>
             <div class="summary-value" id="click-value">0 / 次</div>
-            <div class="summary-subvalue">手动点击的即时收益</div>
+            <div class="summary-subvalue">手动点击收益</div>
           </article>
           <article class="summary-card">
             <div class="summary-label">自动收益</div>
             <div class="summary-value" id="passive-value">0 / 秒</div>
-            <div class="summary-subvalue">店员与设备持续营业</div>
+            <div class="summary-subvalue">设备与店员贡献</div>
           </article>
           <article class="summary-card">
-            <div class="summary-label">咖啡馆倍率</div>
+            <div class="summary-label">全局倍率</div>
             <div class="summary-value" id="multiplier-value">x1.00</div>
-            <div class="summary-subvalue">人气与设施叠加后的效率</div>
+            <div class="summary-subvalue">人气 + 品牌 + 设施</div>
           </article>
           <article class="summary-card">
             <div class="summary-label">人气与营收</div>
             <div class="summary-value" id="popularity-value">0 人气</div>
             <div class="summary-subvalue" id="lifetime-value">0 总营收</div>
+          </article>
+          <article class="summary-card">
+            <div class="summary-label">连锁品牌值</div>
+            <div class="summary-value" id="brand-value">0 品牌值</div>
+            <div class="summary-subvalue">prestige 永久加成</div>
           </article>
         </section>
 
@@ -484,21 +821,21 @@ export class CafeApp {
                 <div class="kicker">主营业区</div>
                 <h2>招待今天的客人</h2>
               </div>
-              <p>点击带来第一波现金流，升级则把生意从手忙脚乱变成稳定经营。</p>
+              <p>先点出基础现金流，再靠买 10 和买最大推进中后期节奏。</p>
             </div>
 
-            <div class="mascot-stage">
+            <div id="mascot-stage" class="mascot-stage stage-early">
               <div class="mascot-copy">
                 <div class="cat-halo">
-                  <div class="cat-face">ฅ^•ﻌ•^ฅ</div>
+                  <div id="cat-face" class="cat-face">ฅ^•ﻌ•^ฅ</div>
                 </div>
-                <p class="cat-copy">今天的值班猫已经趴上吧台了，客人越多，咖啡馆越容易变成大家的固定打卡点。</p>
+                <p id="cat-copy" class="cat-copy">今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。</p>
               </div>
               <div class="float-layer" id="float-layer" aria-hidden="true"></div>
             </div>
 
             <button id="serve-button" class="serve-button" type="button">招待一桌客人</button>
-            <p class="serve-hint" id="serve-hint">每次点击招待一桌客人可获得 1 小鱼干，离线结算按 50% 效率补发。</p>
+            <p class="serve-hint" id="serve-hint">每次点击招待一桌客人可获得 1 小鱼干。</p>
 
             <div class="milestone-status">
               <div class="status-head">
@@ -515,13 +852,62 @@ export class CafeApp {
             <div class="milestone-status">
               <div class="status-head">
                 <div>
+                  <div class="kicker">下一条升级线</div>
+                  <h3>分层解锁</h3>
+                </div>
+                <span class="status-pill">新内容</span>
+              </div>
+              <p class="progress-copy" id="unlock-hint-label"></p>
+              <div class="progress-bar"><div id="unlock-hint-bar" class="progress-fill"></div></div>
+            </div>
+
+            <div class="milestone-status">
+              <div class="status-head">
+                <div>
                   <div class="kicker">终局目标</div>
                   <h3>冲刺明星猫咖</h3>
                 </div>
-                <span class="status-pill">持续营业</span>
+                <span class="status-pill">长期运营</span>
               </div>
               <p class="progress-copy" id="win-progress-label"></p>
               <div class="progress-bar"><div id="win-progress-bar" class="progress-fill win"></div></div>
+            </div>
+
+            <div class="stats-grid">
+              <article class="stats-item">
+                <span>总点击次数</span>
+                <strong id="stats-clicks">0 次</strong>
+              </article>
+              <article class="stats-item">
+                <span>总离线收益</span>
+                <strong id="stats-offline">0 小鱼干</strong>
+              </article>
+              <article class="stats-item">
+                <span>最赚钱升级</span>
+                <strong id="stats-best-upgrade">暂无</strong>
+                <small id="stats-best-upgrade-hint">先购入升级后会显示</small>
+              </article>
+              <article class="stats-item">
+                <span>品牌重整次数</span>
+                <strong id="stats-runs">0 次</strong>
+              </article>
+            </div>
+
+            <div class="panel-header compact">
+              <div>
+                <div class="kicker">当前每秒收益来源</div>
+                <h3>自动收益拆分</h3>
+              </div>
+            </div>
+            <div id="source-list" class="source-list"></div>
+
+            <div class="prestige-panel">
+              <div>
+                <div class="kicker">V1.2 品牌重整</div>
+                <h3>连锁品牌值（Prestige）</h3>
+                <p id="prestige-hint" class="progress-copy">累计营收达到解锁条件后可进行品牌重整。</p>
+              </div>
+              <button id="prestige-button" class="ghost-button prestige-button" type="button">执行品牌重整</button>
             </div>
           </section>
 
@@ -531,7 +917,12 @@ export class CafeApp {
                 <div class="kicker">升级清单</div>
                 <h2>店面扩张</h2>
               </div>
-              <p>先把点击做顺，再把自动收益和倍率系统堆起来，节奏会明显加快。</p>
+              <p>分层解锁 + 买 1/10/最大，避免开局信息过载。</p>
+            </div>
+            <div class="buy-mode-bar">
+              <button class="buy-mode-button active" type="button" data-buy-mode="1" aria-pressed="true">买 1</button>
+              <button class="buy-mode-button" type="button" data-buy-mode="10" aria-pressed="false">买 10</button>
+              <button class="buy-mode-button" type="button" data-buy-mode="max" aria-pressed="false">买最大</button>
             </div>
             <div id="upgrade-list" class="upgrade-list" aria-live="polite"></div>
           </aside>
@@ -540,15 +931,21 @@ export class CafeApp {
         <section class="card mobile-secondary">
           <div class="panel-header mobile-panel-header">
             <div>
-              <div class="kicker">快速切换</div>
+              <div class="kicker">手机快捷区</div>
               <h2 id="mobile-panel-title">店面扩张</h2>
             </div>
-            <p id="mobile-panel-description">常用升级收在这里，手机上不用滑过整页内容再回头购买。</p>
+            <p id="mobile-panel-description">升级、里程碑、日志和成就集中切换，减少长距离滚动。</p>
           </div>
           <div id="mobile-tab-bar" class="mobile-tabs" role="tablist" aria-label="手机分区切换">
             <button class="mobile-tab active" type="button" data-mobile-tab="upgrades" aria-pressed="true">升级</button>
             <button class="mobile-tab" type="button" data-mobile-tab="milestones" aria-pressed="false">里程碑</button>
             <button class="mobile-tab" type="button" data-mobile-tab="logs" aria-pressed="false">日志</button>
+            <button class="mobile-tab" type="button" data-mobile-tab="achievements" aria-pressed="false">成就</button>
+          </div>
+          <div class="buy-mode-bar compact">
+            <button class="buy-mode-button active" type="button" data-buy-mode="1" aria-pressed="true">买 1</button>
+            <button class="buy-mode-button" type="button" data-buy-mode="10" aria-pressed="false">买 10</button>
+            <button class="buy-mode-button" type="button" data-buy-mode="max" aria-pressed="false">买最大</button>
           </div>
           <div id="mobile-panel-body" class="mobile-panel-body upgrade-list" aria-live="polite"></div>
         </section>
@@ -560,7 +957,7 @@ export class CafeApp {
                 <div class="kicker">里程碑</div>
                 <h2>猫圈热度</h2>
               </div>
-              <p>累计营收越高，越能吸引新的客群和更高的人气加成。</p>
+              <p>每个阶段奖励都会影响中后期推进效率。</p>
             </div>
             <div id="milestone-list" class="milestone-list"></div>
           </section>
@@ -569,12 +966,23 @@ export class CafeApp {
             <div class="panel-header">
               <div>
                 <div class="kicker">营业日志</div>
-                <h2>今天店里发生了什么</h2>
+                <h2>动态事件与关键记录</h2>
               </div>
-              <p>保存、里程碑和关键购买都会留下记录，方便你判断下一步怎么扩张。</p>
+              <p>午后高峰、网红探店、节日主题周等事件会在这里出现。</p>
             </div>
             <div id="log-list" class="log-list"></div>
           </section>
+        </section>
+
+        <section class="card desktop-secondary">
+          <div class="panel-header">
+            <div>
+              <div class="kicker">成就系统</div>
+              <h2>明确目标而非纯刷数值</h2>
+            </div>
+            <p>首轮和二周目目标并行，避免通关后失去动力。</p>
+          </div>
+          <div id="achievement-list" class="achievement-list"></div>
         </section>
       </div>
 
@@ -583,7 +991,7 @@ export class CafeApp {
       <div id="win-banner" class="win-banner" aria-live="polite">
         <div class="win-copy">
           <strong>明星猫咖达成</strong>
-          <span>你已经把街角小店做成了城里的热门猫咖，继续营业也会继续积累收益。</span>
+          <span>继续运营可以积累更多品牌值并冲更高周目效率。</span>
         </div>
         <div class="win-badge">继续营业</div>
       </div>

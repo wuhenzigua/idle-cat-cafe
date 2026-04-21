@@ -1,6 +1,15 @@
-import { MAX_LOGS, SAVE_KEY, UPGRADE_DEFINITIONS, createInitialGameState } from './content';
+import { SAVE_KEY, UPGRADE_DEFINITIONS, createInitialGameState } from './content';
 import { refreshDerivedState } from './economy';
-import type { GameState, LogEntry, LogTone, SaveDataV1, StorageLike } from './types';
+import type {
+  BuyMode,
+  GameState,
+  LogEntry,
+  LogTone,
+  SaveDataV2,
+  StorageLike,
+} from './types';
+
+const LEGACY_SAVE_KEY = 'idle-cat-cafe.save.v1';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -43,7 +52,7 @@ function parseLogs(value: unknown): LogEntry[] {
         timestamp,
       };
     })
-    .slice(0, MAX_LOGS);
+    .slice(0, 10);
 }
 
 function normalizeUpgrades(rawValue: unknown): Record<string, number> {
@@ -71,6 +80,48 @@ function normalizeUpgrades(rawValue: unknown): Record<string, number> {
   return normalized;
 }
 
+function parseBuyMode(value: unknown): BuyMode {
+  if (value === 10 || value === 'max') {
+    return value;
+  }
+
+  return 1;
+}
+
+function normalizeStats(rawValue: unknown): GameState['stats'] {
+  const template = createInitialGameState(Date.now()).stats;
+
+  if (!isRecord(rawValue)) {
+    return template;
+  }
+
+  const totalClicks = parseNumber(rawValue.totalClicks) ?? template.totalClicks;
+  const totalOfflineIncome = parseNumber(rawValue.totalOfflineIncome) ?? template.totalOfflineIncome;
+  const lifetimeClickIncome =
+    parseNumber(rawValue.lifetimeClickIncome) ?? template.lifetimeClickIncome;
+  const lifetimePassiveIncome =
+    parseNumber(rawValue.lifetimePassiveIncome) ?? template.lifetimePassiveIncome;
+  const upgradeIncome = { ...template.upgradeIncome };
+
+  if (isRecord(rawValue.upgradeIncome)) {
+    for (const definition of UPGRADE_DEFINITIONS) {
+      const parsed = parseNumber(rawValue.upgradeIncome[definition.id]);
+
+      if (parsed !== null && parsed >= 0) {
+        upgradeIncome[definition.id] = parsed;
+      }
+    }
+  }
+
+  return {
+    totalClicks,
+    totalOfflineIncome,
+    lifetimeClickIncome,
+    lifetimePassiveIncome,
+    upgradeIncome,
+  };
+}
+
 function normalizeGameState(rawValue: unknown, savedAt: number): GameState | null {
   if (!isRecord(rawValue)) {
     return null;
@@ -96,6 +147,46 @@ function normalizeGameState(rawValue: unknown, savedAt: number): GameState | nul
     claimedMilestones: parseStringArray(rawValue.claimedMilestones),
     logs: parseLogs(rawValue.logs),
     lastSavedAt: savedAt,
+    buyMode: parseBuyMode(rawValue.buyMode),
+    brandValue: parseNumber(rawValue.brandValue) ?? 0,
+    runs: parseNumber(rawValue.runs) ?? 0,
+    bestRunRevenue: parseNumber(rawValue.bestRunRevenue) ?? lifetimeRevenue,
+    soundEnabled: parseBoolean(rawValue.soundEnabled) ?? true,
+    claimedAchievements: parseStringArray(rawValue.claimedAchievements),
+    stats: normalizeStats(rawValue.stats),
+  };
+
+  refreshDerivedState(state);
+
+  return state;
+}
+
+function normalizeLegacyGameState(rawValue: unknown, savedAt: number): GameState | null {
+  if (!isRecord(rawValue)) {
+    return null;
+  }
+
+  const template = createInitialGameState(savedAt);
+  const fish = parseNumber(rawValue.fish);
+  const lifetimeRevenue = parseNumber(rawValue.lifetimeRevenue);
+  const popularity = parseNumber(rawValue.popularity);
+  const hasWon = parseBoolean(rawValue.hasWon);
+
+  if (fish === null || lifetimeRevenue === null || popularity === null || hasWon === null) {
+    return null;
+  }
+
+  const state: GameState = {
+    ...template,
+    fish,
+    lifetimeRevenue,
+    popularity,
+    hasWon,
+    upgrades: normalizeUpgrades(rawValue.upgrades),
+    claimedMilestones: parseStringArray(rawValue.claimedMilestones),
+    logs: parseLogs(rawValue.logs),
+    lastSavedAt: savedAt,
+    bestRunRevenue: lifetimeRevenue,
   };
 
   refreshDerivedState(state);
@@ -107,21 +198,21 @@ export function serializeSaveData(state: GameState, savedAt: number): string {
   const preparedState: GameState = {
     ...state,
     lastSavedAt: savedAt,
-    logs: state.logs.slice(0, MAX_LOGS),
+    logs: state.logs.slice(0, 10),
   };
 
   return JSON.stringify({
-    version: 1,
+    version: 2,
     savedAt,
     gameState: preparedState,
-  } satisfies SaveDataV1);
+  } satisfies SaveDataV2);
 }
 
-export function deserializeSaveData(raw: string): SaveDataV1 | null {
+export function deserializeSaveData(raw: string): SaveDataV2 | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
 
-    if (!isRecord(parsed) || parsed.version !== 1) {
+    if (!isRecord(parsed)) {
       return null;
     }
 
@@ -131,17 +222,35 @@ export function deserializeSaveData(raw: string): SaveDataV1 | null {
       return null;
     }
 
-    const gameState = normalizeGameState(parsed.gameState, savedAt);
+    if (parsed.version === 2) {
+      const gameState = normalizeGameState(parsed.gameState, savedAt);
 
-    if (!gameState) {
-      return null;
+      if (!gameState) {
+        return null;
+      }
+
+      return {
+        version: 2,
+        savedAt,
+        gameState,
+      };
     }
 
-    return {
-      version: 1,
-      savedAt,
-      gameState,
-    };
+    if (parsed.version === 1) {
+      const legacyState = normalizeLegacyGameState(parsed.gameState, savedAt);
+
+      if (!legacyState) {
+        return null;
+      }
+
+      return {
+        version: 2,
+        savedAt,
+        gameState: legacyState,
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -155,18 +264,28 @@ function getBrowserStorage(): StorageLike | null {
   return window.localStorage;
 }
 
-export function loadSave(storage: StorageLike | null = getBrowserStorage()): SaveDataV1 | null {
+export function loadSave(storage: StorageLike | null = getBrowserStorage()): SaveDataV2 | null {
   if (!storage) {
     return null;
   }
 
-  const raw = storage.getItem(SAVE_KEY);
+  const primaryRaw = storage.getItem(SAVE_KEY);
 
-  if (!raw) {
+  if (primaryRaw) {
+    const parsed = deserializeSaveData(primaryRaw);
+
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  const legacyRaw = storage.getItem(LEGACY_SAVE_KEY);
+
+  if (!legacyRaw) {
     return null;
   }
 
-  return deserializeSaveData(raw);
+  return deserializeSaveData(legacyRaw);
 }
 
 export function persistSave(
@@ -187,4 +306,5 @@ export function clearPersistedSave(storage: StorageLike | null = getBrowserStora
   }
 
   storage.removeItem(SAVE_KEY);
+  storage.removeItem(LEGACY_SAVE_KEY);
 }
