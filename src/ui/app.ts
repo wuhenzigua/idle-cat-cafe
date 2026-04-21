@@ -2,6 +2,10 @@ import { PRESTIGE_UNLOCK_REVENUE, WIN_TARGET_POPULARITY, WIN_TARGET_REVENUE } fr
 import { getMostProfitableUpgrade } from '../game/economy';
 import { GameEngine } from '../game/engine';
 import type { BuyMode, EngineEvent, GameViewModel, LogTone, UpgradeViewModel } from '../game/types';
+import catFaceEarly from '../assets/cat-face-early.svg';
+import catFaceFame from '../assets/cat-face-fame.svg';
+import catFaceLate from '../assets/cat-face-late.svg';
+import catFaceMid from '../assets/cat-face-mid.svg';
 import { SoundManager } from './sound';
 
 const compactFormatter = new Intl.NumberFormat('zh-CN', {
@@ -19,6 +23,14 @@ const preciseFormatter = new Intl.NumberFormat('zh-CN', {
 });
 
 type MobilePanelTab = 'upgrades' | 'milestones' | 'logs' | 'achievements';
+type MascotStageClass = 'stage-early' | 'stage-mid' | 'stage-late' | 'stage-fame';
+
+const CAT_FACE_BY_STAGE: Record<MascotStageClass, string> = {
+  'stage-early': catFaceEarly,
+  'stage-mid': catFaceMid,
+  'stage-late': catFaceLate,
+  'stage-fame': catFaceFame,
+};
 
 function escapeHtml(value: string): string {
   return value
@@ -108,7 +120,7 @@ export class CafeApp {
   private readonly prestigeButton: HTMLButtonElement;
   private readonly prestigeHint: HTMLParagraphElement;
   private readonly mascotStage: HTMLDivElement;
-  private readonly catFace: HTMLDivElement;
+  private readonly catFace: HTMLImageElement;
   private readonly catCopy: HTMLParagraphElement;
   private readonly storyBanner: HTMLParagraphElement;
   private readonly keydownHandler: (event: KeyboardEvent) => void;
@@ -159,7 +171,7 @@ export class CafeApp {
     this.prestigeButton = this.requireElement<HTMLButtonElement>('prestige-button');
     this.prestigeHint = this.requireElement<HTMLParagraphElement>('prestige-hint');
     this.mascotStage = this.requireElement<HTMLDivElement>('mascot-stage');
-    this.catFace = this.requireElement<HTMLDivElement>('cat-face');
+    this.catFace = this.requireElement<HTMLImageElement>('cat-face');
     this.catCopy = this.requireElement<HTMLParagraphElement>('cat-copy');
     this.storyBanner = this.requireElement<HTMLParagraphElement>('story-banner');
     this.mobileTabs = Array.from(
@@ -608,27 +620,28 @@ export class CafeApp {
   private updateMascotScene(viewModel: GameViewModel): void {
     const revenue = viewModel.state.lifetimeRevenue;
     const popularity = viewModel.state.popularity;
-    let face = '😺';
     let copy = '今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。';
-    let stageClass = 'stage-early';
+    let stageClass: MascotStageClass = 'stage-early';
+    let faceLabel = '专注值班';
 
     if (viewModel.state.hasWon) {
-      face = '😻';
       copy = '明星猫咖达成，猫咪们开始挑选下一站扩张城市。';
       stageClass = 'stage-fame';
+      faceLabel = '明星营业';
     } else if (revenue >= 40_000 || popularity >= 90) {
-      face = '😼';
       copy = '品牌进入高光阶段，探店客和回头客同时拉升节奏。';
       stageClass = 'stage-late';
+      faceLabel = '高光冲刺';
     } else if (revenue >= 10_000 || popularity >= 45) {
-      face = '😸';
       copy = '店里开始形成固定客流，升级决策比疯狂点击更重要。';
       stageClass = 'stage-mid';
+      faceLabel = '稳定运营';
     }
 
     this.mascotStage.classList.remove('stage-early', 'stage-mid', 'stage-late', 'stage-fame');
     this.mascotStage.classList.add(stageClass);
-    this.catFace.textContent = face;
+    this.catFace.src = CAT_FACE_BY_STAGE[stageClass];
+    this.catFace.alt = `猫咪表情：${faceLabel}`;
     this.catCopy.textContent = copy;
   }
 
@@ -848,7 +861,7 @@ export class CafeApp {
             <div id="mascot-stage" class="mascot-stage stage-early">
               <div class="mascot-copy">
                 <div class="cat-halo">
-                  <div id="cat-face" class="cat-face">😺</div>
+                  <img id="cat-face" class="cat-face-image" src="${catFaceEarly}" alt="猫咪表情：专注值班" />
                 </div>
                 <p id="cat-copy" class="cat-copy">今天的值班猫已经趴上吧台了，客人越多，店里节奏越稳。</p>
               </div>
